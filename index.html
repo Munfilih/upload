@@ -5,31 +5,83 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>GoFile Upload with Bootstrap</title>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet" />
+
 </head>
 <body>
   <div class="container my-4">
     <h2 class="mb-4 text-center">Polosys File Manager</h2>
-    <div class="alert alert-info">
-      <strong>Note:</strong> Files are uploaded to GoFile servers and can be downloaded from any device using the links below.
-    </div>
 
     <div class="mb-3">
       <input class="form-control" type="file" id="fileInput" />
     </div>
     <button class="btn btn-primary mb-4" id="uploadBtn">Upload</button>
+    
+    <div class="progress mb-3" id="progressContainer" style="display: none;">
+      <div class="progress-bar" id="progressBar" role="progressbar" style="width: 0%">0%</div>
+    </div>
 
     <h3>Uploaded Files</h3>
     <ul class="list-group" id="fileList"></ul>
   </div>
 
-  <script>
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/12.4.0/firebase-app.js";
+    import { getFirestore, collection, addDoc, onSnapshot, deleteDoc, doc } from "https://www.gstatic.com/firebasejs/12.4.0/firebase-firestore.js";
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyCK1E4gUDECm8O-x_JJHwIhoSlcuBoPQlc",
+      authDomain: "upload-9c442.firebaseapp.com",
+      projectId: "upload-9c442",
+      storageBucket: "upload-9c442.firebasestorage.app",
+      messagingSenderId: "206460291139",
+      appId: "1:206460291139:web:75b7ab9ca67acf3065ecf6",
+      measurementId: "G-112LLPCLWC"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const db = getFirestore(app);
+    const filesCollection = collection(db, 'files');
+
     const fileInput = document.getElementById('fileInput');
     const uploadBtn = document.getElementById('uploadBtn');
     const fileList = document.getElementById('fileList');
 
     let uploadedFiles = [];
-    const CLOUD_DB = 'https://api.jsonbin.io/v3/b/6756f8e5ad19ca34f8c8f9a2';
-    const API_KEY = '$2a$10$8vF2qJ3kL9mN5pQ7rS1tUeX4yH6zB3cA9dE8fG2hI5jK7lM8nO0pQ';
+
+    window.deleteFile = async function(id) {
+      if (confirm('Delete file permanently?')) {
+        try {
+          await deleteDoc(doc(db, 'files', id));
+        } catch (error) {
+          alert('Failed to delete file: ' + error.message);
+        }
+      }
+    };
+
+    window.downloadFile = async function(url, filename) {
+      try {
+        const response = await fetch(url);
+        const blob = await response.blob();
+        const downloadUrl = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = downloadUrl;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        window.URL.revokeObjectURL(downloadUrl);
+      } catch (error) {
+        window.open(url, '_blank');
+      }
+    };
+
+    const progressContainer = document.getElementById('progressContainer');
+    const progressBar = document.getElementById('progressBar');
+
+    function updateProgress(percent) {
+      progressBar.style.width = percent + '%';
+      progressBar.textContent = percent + '%';
+    }
 
     uploadBtn.addEventListener('click', async () => {
       if (!fileInput.files.length) {
@@ -42,115 +94,110 @@
         const formData = new FormData();
         formData.append('file', file);
 
-        // Upload file directly
-        const uploadRes = await fetch('https://store1.gofile.io/uploadFile', {
-          method: 'POST',
-          body: formData,
+        uploadBtn.disabled = true;
+        uploadBtn.textContent = 'Uploading...';
+        progressContainer.style.display = 'block';
+        updateProgress(0);
+
+        const xhr = new XMLHttpRequest();
+        
+        xhr.upload.addEventListener('progress', (e) => {
+          if (e.lengthComputable) {
+            const percent = Math.round((e.loaded / e.total) * 100);
+            updateProgress(percent);
+          }
         });
 
-        const uploadData = await uploadRes.json();
+        const uploadPromise = new Promise((resolve, reject) => {
+          xhr.onload = () => {
+            if (xhr.status === 200) {
+              resolve(JSON.parse(xhr.responseText));
+            } else {
+              reject(new Error('Upload failed'));
+            }
+          };
+          xhr.onerror = () => reject(new Error('Network error'));
+        });
+
+        xhr.open('POST', 'https://store1.gofile.io/uploadFile');
+        xhr.send(formData);
+
+        const uploadData = await uploadPromise;
         
         if (uploadData.status !== 'ok') {
           alert('Upload failed: ' + JSON.stringify(uploadData));
           return;
         }
 
-        // Add file to list
-        uploadedFiles.push({
+        // Get direct download link
+        const fileId = uploadData.data.fileId;
+        const detailsRes = await fetch(`https://api.gofile.io/getContent?contentId=${fileId}`);
+        const detailsData = await detailsRes.json();
+        
+        const directDownloadLink = detailsData.status === 'ok' ? 
+          Object.values(detailsData.data.contents)[0]?.directLink : 
+          uploadData.data.downloadPage;
+
+        const newFile = {
           name: file.name,
-          link: uploadData.data.downloadPage,
-          directLink: uploadData.data.directLink || uploadData.data.downloadPage,
-        });
-        await saveToCloud();
-        renderFileList();
-        fileInput.value = ''; // reset input
+          size: (file.size / (1024*1024)).toFixed(2) + ' MB',
+          uploadTime: new Date().toLocaleString(),
+          downloadLink: uploadData.data.downloadPage,
+          directLink: directDownloadLink,
+          timestamp: Date.now()
+        };
+        
+        await addDoc(filesCollection, newFile);
+        fileInput.value = '';
+        alert('File uploaded successfully!');
+        
       } catch (err) {
+        console.error('Upload error:', err);
         alert('Error: ' + err.message);
+      } finally {
+        uploadBtn.disabled = false;
+        uploadBtn.textContent = 'Upload';
+        progressContainer.style.display = 'none';
       }
     });
 
     function renderFileList() {
+      console.log('Rendering files:', uploadedFiles.length);
       fileList.innerHTML = '';
       if (uploadedFiles.length === 0) {
         fileList.innerHTML = '<li class="list-group-item">No files uploaded yet.</li>';
         return;
       }
 
-      uploadedFiles.forEach((file, index) => {
+      uploadedFiles.forEach((file) => {
         const li = document.createElement('li');
         li.className = 'list-group-item d-flex justify-content-between align-items-center';
 
         li.innerHTML = `
-          <span>${file.name}</span>
           <div>
-            <a href="${file.directLink}" target="_blank" class="btn btn-sm btn-success me-2">Download</a>
-            <button class="btn btn-sm btn-danger">Remove</button>
+            <strong>${file.name}</strong><br>
+            <small class="text-muted">${file.size} • ${file.uploadTime}</small>
+          </div>
+          <div>
+            <button onclick="downloadFile('${file.directLink}', '${file.name}')" class="btn btn-sm btn-success me-2">Download</button>
+            <button class="btn btn-sm btn-danger" onclick="deleteFile('${file.id}')">Remove</button>
           </div>
         `;
-
-        // Remove button handler
-        li.querySelector('button').onclick = async () => {
-          if (confirm('Delete file permanently?')) {
-            uploadedFiles.splice(index, 1);
-            await saveToCloud();
-            renderFileList();
-          }
-        };
 
         fileList.appendChild(li);
       });
     }
 
-    // Load files from cloud on startup
-    loadFromCloud();
-    
-    async function loadFromCloud() {
-      try {
-        console.log('Loading from cloud...');
-        const response = await fetch(CLOUD_DB + '/latest', {
-          headers: { 'X-Master-Key': API_KEY }
-        });
-        
-        if (!response.ok) {
-          throw new Error('Cloud request failed: ' + response.status);
-        }
-        
-        const data = await response.json();
-        console.log('Cloud data:', data);
-        
-        uploadedFiles = data.record || [];
-        console.log('Loaded files:', uploadedFiles);
-      } catch (error) {
-        console.log('Cloud load failed:', error.message);
-        uploadedFiles = JSON.parse(localStorage.getItem('uploadedFiles') || '[]');
-        console.log('Using localStorage:', uploadedFiles);
-      }
+    onSnapshot(filesCollection, (snapshot) => {
+      uploadedFiles = [];
+      snapshot.forEach((doc) => {
+        uploadedFiles.push({ id: doc.id, ...doc.data() });
+      });
+      uploadedFiles.sort((a, b) => b.timestamp - a.timestamp);
       renderFileList();
-    }
-    
-    async function saveToCloud() {
-      try {
-        console.log('Saving to cloud:', uploadedFiles);
-        const response = await fetch(CLOUD_DB, {
-          method: 'PUT',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-Master-Key': API_KEY
-          },
-          body: JSON.stringify(uploadedFiles)
-        });
-        
-        if (!response.ok) {
-          throw new Error('Cloud save failed: ' + response.status);
-        }
-        
-        console.log('Saved to cloud successfully');
-        localStorage.setItem('uploadedFiles', JSON.stringify(uploadedFiles));
-      } catch (error) {
-        console.log('Cloud save failed:', error.message);
-        localStorage.setItem('uploadedFiles', JSON.stringify(uploadedFiles));
-      }
-    }
+    });
+
+    renderFileList();
   </script>
 </body>
 </html>
