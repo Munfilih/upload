@@ -8,7 +8,10 @@
 </head>
 <body>
   <div class="container my-4">
-    <h2 class="mb-4 text-center">Upload Files to GoFile (No Login Required)</h2>
+    <h2 class="mb-4 text-center">Polosys File Manager</h2>
+    <div class="alert alert-info">
+      <strong>Note:</strong> Files are uploaded to GoFile servers and can be downloaded from any device using the links below.
+    </div>
 
     <div class="mb-3">
       <input class="form-control" type="file" id="fileInput" />
@@ -25,6 +28,8 @@
     const fileList = document.getElementById('fileList');
 
     let uploadedFiles = [];
+    const CLOUD_DB = 'https://api.jsonbin.io/v3/b/6756f8e5ad19ca34f8c8f9a2';
+    const API_KEY = '$2a$10$8vF2qJ3kL9mN5pQ7rS1tUeX4yH6zB3cA9dE8fG2hI5jK7lM8nO0pQ';
 
     uploadBtn.addEventListener('click', async () => {
       if (!fileInput.files.length) {
@@ -50,13 +55,13 @@
           return;
         }
 
-        // Store uploaded file info
+        // Add file to list
         uploadedFiles.push({
           name: file.name,
           link: uploadData.data.downloadPage,
           directLink: uploadData.data.directLink || uploadData.data.downloadPage,
         });
-
+        await saveToCloud();
         renderFileList();
         fileInput.value = ''; // reset input
       } catch (err) {
@@ -83,10 +88,11 @@
           </div>
         `;
 
-        // Remove button handler (removes from list only)
-        li.querySelector('button').onclick = () => {
-          if (confirm('Remove file from list?')) {
+        // Remove button handler
+        li.querySelector('button').onclick = async () => {
+          if (confirm('Delete file permanently?')) {
             uploadedFiles.splice(index, 1);
+            await saveToCloud();
             renderFileList();
           }
         };
@@ -95,8 +101,56 @@
       });
     }
 
-    // Initialize file list
-    renderFileList();
+    // Load files from cloud on startup
+    loadFromCloud();
+    
+    async function loadFromCloud() {
+      try {
+        console.log('Loading from cloud...');
+        const response = await fetch(CLOUD_DB + '/latest', {
+          headers: { 'X-Master-Key': API_KEY }
+        });
+        
+        if (!response.ok) {
+          throw new Error('Cloud request failed: ' + response.status);
+        }
+        
+        const data = await response.json();
+        console.log('Cloud data:', data);
+        
+        uploadedFiles = data.record || [];
+        console.log('Loaded files:', uploadedFiles);
+      } catch (error) {
+        console.log('Cloud load failed:', error.message);
+        uploadedFiles = JSON.parse(localStorage.getItem('uploadedFiles') || '[]');
+        console.log('Using localStorage:', uploadedFiles);
+      }
+      renderFileList();
+    }
+    
+    async function saveToCloud() {
+      try {
+        console.log('Saving to cloud:', uploadedFiles);
+        const response = await fetch(CLOUD_DB, {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Master-Key': API_KEY
+          },
+          body: JSON.stringify(uploadedFiles)
+        });
+        
+        if (!response.ok) {
+          throw new Error('Cloud save failed: ' + response.status);
+        }
+        
+        console.log('Saved to cloud successfully');
+        localStorage.setItem('uploadedFiles', JSON.stringify(uploadedFiles));
+      } catch (error) {
+        console.log('Cloud save failed:', error.message);
+        localStorage.setItem('uploadedFiles', JSON.stringify(uploadedFiles));
+      }
+    }
   </script>
 </body>
 </html>
