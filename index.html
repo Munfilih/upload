@@ -129,14 +129,20 @@
           return;
         }
 
-        // Get direct download link
-        const fileId = uploadData.data.fileId;
-        const detailsRes = await fetch(`https://api.gofile.io/getContent?contentId=${fileId}`);
-        const detailsData = await detailsRes.json();
-        
-        const directDownloadLink = detailsData.status === 'ok' ? 
-          Object.values(detailsData.data.contents)[0]?.directLink : 
-          uploadData.data.downloadPage;
+        // Try to get direct download link
+        let directDownloadLink = uploadData.data.downloadPage;
+        try {
+          const fileId = uploadData.data.fileId;
+          const detailsRes = await fetch(`https://api.gofile.io/getContent?contentId=${fileId}`);
+          if (detailsRes.ok) {
+            const detailsData = await detailsRes.json();
+            if (detailsData.status === 'ok' && detailsData.data.contents) {
+              directDownloadLink = Object.values(detailsData.data.contents)[0]?.directLink || uploadData.data.downloadPage;
+            }
+          }
+        } catch (e) {
+          console.log('Could not get direct link, using download page');
+        }
 
         const newFile = {
           name: file.name,
